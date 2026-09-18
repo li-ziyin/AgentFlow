@@ -1,0 +1,29 @@
+# 数据库和缓存用 Docker 起，第 3 周接入存储层时再启动：
+#   docker compose up -d
+# 查看日志：docker compose logs -f mysql
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: agentflow-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root123456
+      MYSQL_DATABASE: agentflow
+      MYSQL_USER: agentflow
+      MYSQL_PASSWORD: agentflow123
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+
+  redis:
+    image: redis:7-alpine
+    container_name: agentflow-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+volumes:
+  mysql-data:
+  redis-data:
