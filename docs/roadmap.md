@@ -41,7 +41,7 @@
 - [x] 1.1 `llm/` 包：用 WebClient 封装 OpenAI 兼容客户端（chat/completions，支持流式），key 从配置读、不进 git（流式 streamChat 留到 1.3）
 - [x] 1.2 `POST /api/chat`：阻塞式对话，请求体校验（@Valid），接 LLM 返回完整回答
 - [x] 1.3 `GET /api/chat/stream`（或 POST + SseEmitter）：SSE 流式逐 token 输出
-- [ ] 1.4 会话上下文：内存 Map 保存最近 N 轮对话，支持多会话 id
+- [x] 1.4 会话上下文：内存 Map 保存最近 N 轮对话，支持多会话 id
 - [x] 1.5 处理流中的异常：LLM 中途断流时向客户端发 error 事件（回看 GlobalExceptionHandler 里的注释）
 - [ ] 1.6 用 curl / Apifox 演示三种调用并录屏
 
@@ -55,6 +55,9 @@
 5. 流式接口的错误处理和普通接口有什么本质区别？（提示：HTTP 状态码只能在"流开始前"设置）
 6. 本项目 HTTP 状态码恒为 200、错误码放 body——这个风格的优缺点？网关监控会受什么影响？
 7. 如果同时来 1000 个长连接对话请求，Tomcat 默认 200 线程会发生什么？怎么解？（为 P4 虚拟线程埋伏笔）
+8. LLM API 是无状态的，多轮对话的"记忆"是怎么实现的？
+9. 会话历史越来越长怎么办？（截断 / 老消息摘要压缩 / 按相关性检索——RAG 的思想提前露头）
+10. 内存版会话存储有什么缺陷？如何演进到分布式？（Phase 2 埋伏笔）
 
 ---
 
@@ -63,7 +66,7 @@
 **目标**：引入 MySQL/Redis，完成"上传文档 → 切分 → 向量化 → 检索 → 带引用回答"全链路。
 
 **任务**
-- [ ] 2.1 `docker compose up -d` 起 MySQL/Redis；开启 application.yml 中数据源配置
+- [x] 2.1 `docker compose up -d` 起 MySQL/Redis；开启 application.yml 中数据源配置
 - [ ] 2.2 Spring Data JPA 实体：conversation / message 落库，替换内存上下文
 - [ ] 2.3 `rag/` 包：文档上传接口，分块（按段落 + overlap），调用 embedding API 向量化（注意：**DeepSeek 没有 embedding 接口**，届时用智谱 embedding-3 或本地 bge-m3，主对话模型仍走 DeepSeek）
 - [ ] 2.4 向量存储 MVP：MySQL 存 JSON 数组，检索时内存暴力余弦相似度（**故意先这样做**，P5 有升级故事）
@@ -168,3 +171,6 @@
 | 2026-09-19 | P1.3+1.5 代码完成：streamChat（SSE 解析 → Flux\<String\>）+ `/api/chat/stream`（SseEmitter）+ 流内 error 事件 + 断连 dispose；新增 404 处理。8081 冒烟通过 | 坑4：本地测试请求打到了**别人还开着的旧实例**上（8080 被用户验收用的进程占用），新实例起不来——**测试前先确认"我在测哪个实例"**，并行调试用不同端口；坑5（设计取舍）：本项目 HTTP 状态码恒 200、错误码放 body，监控按 HTTP 统计错误率会失真，Phase 5 可观测时回看 |
 | 2026-09-19 | 排障：流式接口读不到 key | 坑6：`setx` 只对之后新开的进程生效，旧终端里重启应用照样读不到 `LLM_API_KEY`——**setx 之后必须开新窗口再启动应用**；附：PowerShell 的 curl 是假 alias（用 curl.exe）、5.1 传参会吞内嵌引号（body 走 `--data-binary @文件` 最稳） |
 | 2026-09-19 | ✅ **P1.3+1.5 用户验收通过**：SSE 打字机效果跑通（VS Code 调试器 F5 启动的实例） | 坑7：WebClient 消费 SSE 必须用 `ServerSentEvent<String>` 泛型，`bodyToFlux(String.class)` 会静默空流；坑8：错误消费者必须同时记日志，否则服务端零痕迹；坑9：终端 mvnw、F5 调试器、孤儿进程会抢同一个端口，启动前 `netstat -ano | findstr :8080` 先看谁占着 |
+| 2026-09-19 | ✅ **P1.4 完成并验证**：LlmMessage 抽取 / ConversationStore（内存，上限 20 条截断）/ 两接口接入多轮上下文 / session 事件先行。真实 LLM 验证：同会话记住"小明+7"，新会话明确失忆 | 坑10（设计记录）：流式接口的完整回答只在流成功结束后写入历史，半截回答不污染上下文；sessionId 由客户端生成传递，服务器只认 id 不认人——无状态服务的雏形 |
+| 2026-09-20 | ✅ **P1.4 用户验收通过**；演示页提前到 P1 做了最小版：`static/index.html`（fetch 手动读 SSE 流 + localStorage 存 sessionId），P5.6 届时只打磨 | 坑11：VS Code 把 .http 文件里的 URL 渲染成超链接，点 URL = 浏览器打开 = GET 请求——要点的是请求上方灰色的 "Send Request"（CodeLens），成功标志是右侧弹出响应面板；配套加了 `RequestLogFilter` 访问日志排障，"让服务器说出它收到了什么" |
+| 2026-09-20 | Docker Desktop（per-user 版，WSL2 backend）装好；配置镜像加速器后拉取恢复正常；`docker compose up -d` 拉起 MySQL+Redis，agentflow 库连通 | 坑12：Docker Hub 国内直连超时——实测镜像站存活：docker.m.daocloud.io / docker.1ms.run / docker.xuanyuan.me 可用（/v2/ 返回 401 是健康标志），dockerproxy.net 已死；配置在 Docker Desktop → Settings → Docker Engine 的 `registry-mirrors` |

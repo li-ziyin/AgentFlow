@@ -17,6 +17,8 @@ import java.util.List;
 
 /**
  * DeepSeek（OpenAI 兼容协议）聊天客户端：阻塞式（chat）+ 流式（streamChat）。
+ * 1.4 起入参是完整消息列表（系统提示 + 历史 + 本轮用户消息），
+ * "带什么上下文"这个决定权在调用方，客户端只管忠实发送。
  *
  * 为什么用 WebClient 而不是 RestTemplate：RestTemplate 已进入维护模式且流式支持差；
  * WebClient 平时可以 block() 当同步客户端用，流式时返回 Flux 逐段消费，一个客户端覆盖两种模式。
@@ -43,14 +45,13 @@ public class DeepSeekClient {
                 .build();
     }
 
-    /** 阻塞式对话：发一条用户消息，等模型写完，返回全文。上下文（多轮）在 1.4 引入。 */
-    public String chat(String userMessage) {
+    /** 阻塞式对话：等模型写完，返回回答全文。 */
+    public String chat(List<LlmMessage> messages) {
         requireApiKey();
-        Request req = new Request(props.model(), List.of(new Message("user", userMessage)), false);
         Response resp = http.post()
                 .uri("/chat/completions")
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(req)
+                .bodyValue(new Request(props.model(), messages, false))
                 .retrieve()
                 .bodyToMono(Response.class)
                 .block(Duration.ofSeconds(props.timeoutSeconds()));
@@ -61,21 +62,20 @@ public class DeepSeekClient {
     }
 
     /**
-     * 流式对话（1.3）：返回逐段文本增量，由调用方决定推给谁（SSE / WebSocket / ...）。
+     * 流式对话：返回逐段文本增量，由调用方决定推给谁（SSE / WebSocket / ...）。
      *
      * 关键：消费 SSE 必须声明 ServerSentEvent 泛型，由框架拆帧（"data:" 前缀、事件边界、
      * 多行 data），不要用 bodyToFlux(String.class) 手写按行解析——text/event-stream
      * 下 String 解码器行为不对，会静默产出空流。
      * DeepSeek 的每个事件 data 是一段 JSON（增量在 choices[0].delta.content），结束标记是 [DONE]。
      */
-    public Flux<String> streamChat(String userMessage) {
+    public Flux<String> streamChat(List<LlmMessage> messages) {
         requireApiKey();
-        Request req = new Request(props.model(), List.of(new Message("user", userMessage)), true);
         return http.post()
                 .uri("/chat/completions")
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.TEXT_EVENT_STREAM)
-                .bodyValue(req)
+                .bodyValue(new Request(props.model(), messages, true))
                 .retrieve()
                 .bodyToFlux(new ParameterizedTypeReference<ServerSentEvent<String>>() { })
                 .map(event -> event.data())
@@ -98,7 +98,7 @@ public class DeepSeekClient {
         }
     }
 
-    /** 从一行 SSE data 里抠出增量文本；心跳行、role 行、无法解析的行一律返回空串交给上游过滤。 */
+    /** 从一段 SSE data 里抠出增量文本；[DONE]、role 行、无法解析的行一律返回空串交给上游过滤。 */
     private String extractDelta(String data) {
         if (SSE_DONE.equals(data)) {
             return "";
@@ -115,11 +115,7 @@ public class DeepSeekClient {
     // DeepSeek 是 OpenAI 兼容协议，换厂商时通常只需改 base-url 和 model
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record Request(String model, List<Message> messages, Boolean stream) {
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    record Message(String role, String content) {
+    record Request(String model, List<LlmMessage> messages, Boolean stream) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -127,6 +123,6 @@ public class DeepSeekClient {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record Choice(Message message) {
+    record Choice(LlmMessage message) {
     }
 }

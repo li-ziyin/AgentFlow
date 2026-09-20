@@ -1,0 +1,34 @@
+### AgentFlow 接口测试文件
+### 用法：每个请求上方的 "Send Request" 文字上点击一下，就会在右侧发出并显示响应
+### 本文件是 UTF-8 编码，中文消息直接写，没有终端编码问题
+### 插件：REST Client（humao.rest-client）
+
+### 0. 健康检查
+GET http://localhost:8080/actuator/health
+
+### 1. 阻塞式对话：等模型写完一次性返回（体会：要等好几秒）
+### 不带 sessionId，响应里会返回新生成的 sessionId——之后想继续这个对话就带上它
+POST http://localhost:8080/api/chat
+Content-Type: application/json
+
+{"message":"我叫小明，最喜欢的数字是 7，请记住"}
+
+### 2. 多轮对话第 2 轮：把上一条响应里的 sessionId 粘贴过来
+### 如果模型答出"小明"和"7"，说明多轮上下文生效了
+POST http://localhost:8080/api/chat
+Content-Type: application/json
+
+{"sessionId":"把第1步响应里的sessionId粘贴到这里","message":"我叫什么名字？最喜欢的数字是几？"}
+
+### 3. 流式对话（打字机效果）
+### 流式版会先收到一个 event:session（会话 id），然后若干 event:delta，测完点响应面板的"取消"
+POST http://localhost:8080/api/chat/stream
+Content-Type: application/json
+
+{"message":"给我讲一个关于机器人的小故事"}
+
+### 4. 参数校验测试：空消息（预期返回 code=400）
+POST http://localhost:8080/api/chat
+Content-Type: application/json
+
+{"message":""}

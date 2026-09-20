@@ -2,6 +2,7 @@ package com.agentflow.chat;
 
 import com.agentflow.common.Result;
 import com.agentflow.llm.DeepSeekClient;
+import com.agentflow.llm.LlmMessage;
 import com.agentflow.llm.LlmProperties;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -17,6 +18,9 @@ import reactor.core.Disposable;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/chat")
@@ -26,37 +30,54 @@ public class ChatController {
 
     private final DeepSeekClient llm;
     private final LlmProperties props;
+    private final ConversationStore store;
 
-    public ChatController(DeepSeekClient llm, LlmProperties props) {
+    public ChatController(DeepSeekClient llm, LlmProperties props, ConversationStore store) {
         this.llm = llm;
         this.props = props;
-    }
-
-    public record ChatRequest(@NotBlank String message) {
-    }
-
-    /** 1.2 阻塞版：等模型写完一次性返回。体验和流式版对比后你就明白 LLM 为什么必须流式。 */
-    @PostMapping
-    public Result<String> chat(@Valid @RequestBody ChatRequest req) {
-        return Result.ok(llm.chat(req.message()));
+        this.store = store;
     }
 
     /**
-     * 1.3 流式版（SSE）：每段增量以名为 delta 的事件推送，出错发 error 事件，然后正常收尾。
+     * sessionId 可以不传：服务器会生成一个新的并随响应返回，
+     * 客户端之后每一轮带上它，就是"同一个对话"。服务器不认识"用户"，只认识会话 id。
+     */
+    public record ChatRequest(String sessionId, @NotBlank String message) {
+    }
+
+    public record ChatResponse(String sessionId, String answer) {
+    }
+
+    /** 1.2 阻塞版 + 1.4 多轮上下文。 */
+    @PostMapping
+    public Result<ChatResponse> chat(@Valid @RequestBody ChatRequest req) {
+        String sessionId = resolveSessionId(req);
+        String answer = llm.chat(buildMessages(sessionId, req.message()));
+        store.append(sessionId,
+                new LlmMessage("user", req.message()),
+                new LlmMessage("assistant", answer));
+        return Result.ok(new ChatResponse(sessionId, answer));
+    }
+
+    /**
+     * 1.3 流式版 + 1.4 多轮上下文。
      *
-     * 三个值得记住的点：
-     * 1. SseEmitter 是 Servlet 异步请求的封装：HTTP 响应不关闭，服务端随时往里 write；
-     * 2. 数据在 Reactor 的 IO 线程产生。客户端断开后 send() 会抛 IOException，
-     *    这里把它转成异常抛回 Reactor，让它自动 cancel 上游（响应链断开就没人消费了）；
-     * 3. onTimeout/onError/onCompletion 里 dispose()：人走了就立刻停掉 LLM 调用，
-     *    否则模型在给一个已经离开的连接继续烧 token——流式接口的成本意识。
+     * 流式版协议：先发一个 session 事件（客户端立刻拿到会话 id，不必等流结束），
+     * 然后若干 delta 事件（文本增量），出错发 error 事件，正常结束由服务端收尾。
+     * 完整回答只在流成功结束后才写入历史——半截回答不污染上下文。
      */
     @PostMapping("/stream")
     public SseEmitter chatStream(@Valid @RequestBody ChatRequest req) {
+        String sessionId = resolveSessionId(req);
         SseEmitter emitter = new SseEmitter(props.timeoutSeconds() * 1000L);
+        sendSessionId(emitter, sessionId);
 
-        Disposable subscription = llm.streamChat(req.message()).subscribe(
+        StringBuilder answer = new StringBuilder();
+        List<LlmMessage> messages = buildMessages(sessionId, req.message());
+
+        Disposable subscription = llm.streamChat(messages).subscribe(
                 delta -> {
+                    answer.append(delta);
                     try {
                         // data() 指定 TEXT_PLAIN：避免字符串被 JSON 序列化器包上一层引号
                         emitter.send(SseEmitter.event().name("delta").data(delta, MediaType.TEXT_PLAIN));
@@ -67,7 +88,7 @@ public class ChatController {
                 err -> {
                     // 流已开始，HTTP 状态码改不了了，只能把错误作为事件发进流里。
                     // 同时必须记日志：只发事件不留日志，服务端就零痕迹可查
-                    log.error("SSE stream failed, message=[{}]", req.message(), err);
+                    log.error("SSE stream failed, sessionId=[{}]", sessionId, err);
                     try {
                         String msg = err.getMessage() == null ? "unknown error" : err.getMessage();
                         emitter.send(SseEmitter.event().name("error").data(msg, MediaType.TEXT_PLAIN));
@@ -76,12 +97,39 @@ public class ChatController {
                     }
                     emitter.complete();
                 },
-                emitter::complete
+                () -> {
+                    store.append(sessionId,
+                            new LlmMessage("user", req.message()),
+                            new LlmMessage("assistant", answer.toString()));
+                    emitter.complete();
+                }
         );
 
         emitter.onTimeout(subscription::dispose);
         emitter.onError(t -> subscription.dispose());
         emitter.onCompletion(subscription::dispose);
         return emitter;
+    }
+
+    private void sendSessionId(SseEmitter emitter, String sessionId) {
+        try {
+            emitter.send(SseEmitter.event().name("session").data(sessionId, MediaType.TEXT_PLAIN));
+        } catch (IOException e) {
+            log.warn("Failed to send session event", e);
+        }
+    }
+
+    /** 历史 + 本轮用户消息。LLM 无状态，"记忆"就是每次把历史全量带上。 */
+    private List<LlmMessage> buildMessages(String sessionId, String userMessage) {
+        List<LlmMessage> messages = new ArrayList<>(store.history(sessionId));
+        messages.add(new LlmMessage("user", userMessage));
+        return messages;
+    }
+
+    private String resolveSessionId(ChatRequest req) {
+        if (req.sessionId() == null || req.sessionId().isBlank()) {
+            return UUID.randomUUID().toString();
+        }
+        return req.sessionId().trim();
     }
 }

@@ -47,7 +47,12 @@ flowchart TB
 # 验证
 curl http://localhost:8080/api/ping          # {"code":0,"message":"ok",...}
 curl http://localhost:8080/actuator/health   # {"status":"UP",...}
+
+# 聊天页面（浏览器打开 http://localhost:8080/ 即可）
+# 静态页由 Spring Boot 托管：流式对话、多轮会话、新会话切换
 ```
+
+接口级测试用项目根目录的 `requests.http`（需 VS Code 插件 REST Client）。
 
 ## 目录结构
 
