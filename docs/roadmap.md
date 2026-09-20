@@ -67,7 +67,7 @@
 
 **任务**
 - [x] 2.1 `docker compose up -d` 起 MySQL/Redis；开启 application.yml 中数据源配置
-- [ ] 2.2 Spring Data JPA 实体：conversation / message 落库，替换内存上下文
+- [x] 2.2 Spring Data JPA 实体：conversation / message 落库，替换内存上下文（实现为单表 chat_message，按 session_id 分组；"存全部、取最近 20 条进上下文"）
 - [ ] 2.3 `rag/` 包：文档上传接口，分块（按段落 + overlap），调用 embedding API 向量化（注意：**DeepSeek 没有 embedding 接口**，届时用智谱 embedding-3 或本地 bge-m3，主对话模型仍走 DeepSeek）
 - [ ] 2.4 向量存储 MVP：MySQL 存 JSON 数组，检索时内存暴力余弦相似度（**故意先这样做**，P5 有升级故事）
 - [ ] 2.5 混合检索：关键词过滤 + 向量 TopK，简单加权融合
@@ -174,3 +174,4 @@
 | 2026-09-19 | ✅ **P1.4 完成并验证**：LlmMessage 抽取 / ConversationStore（内存，上限 20 条截断）/ 两接口接入多轮上下文 / session 事件先行。真实 LLM 验证：同会话记住"小明+7"，新会话明确失忆 | 坑10（设计记录）：流式接口的完整回答只在流成功结束后写入历史，半截回答不污染上下文；sessionId 由客户端生成传递，服务器只认 id 不认人——无状态服务的雏形 |
 | 2026-09-20 | ✅ **P1.4 用户验收通过**；演示页提前到 P1 做了最小版：`static/index.html`（fetch 手动读 SSE 流 + localStorage 存 sessionId），P5.6 届时只打磨 | 坑11：VS Code 把 .http 文件里的 URL 渲染成超链接，点 URL = 浏览器打开 = GET 请求——要点的是请求上方灰色的 "Send Request"（CodeLens），成功标志是右侧弹出响应面板；配套加了 `RequestLogFilter` 访问日志排障，"让服务器说出它收到了什么" |
 | 2026-09-20 | Docker Desktop（per-user 版，WSL2 backend）装好；配置镜像加速器后拉取恢复正常；`docker compose up -d` 拉起 MySQL+Redis，agentflow 库连通 | 坑12：Docker Hub 国内直连超时——实测镜像站存活：docker.m.daocloud.io / docker.1ms.run / docker.xuanyuan.me 可用（/v2/ 返回 401 是健康标志），dockerproxy.net 已死；配置在 Docker Desktop → Settings → Docker Engine 的 `registry-mirrors` |
+| 2026-09-20 | ✅ **P2.2 完成并验证**：ChatMessageEntity + ChatMessageRepository + ConversationStore 换数据库实现（调用方零改动）；重启应用后同 sessionId 记忆仍在（4 行数据横跨两次进程生命周期） | 坑13：YAML 里注释不隔断结构，`datasource:` 写在 management 段后面、因缩进被解析成它的子项，Spring 读不到数据源——**YAML 配置块必须确认挂在正确的顶层键下**；DTO 用 record / 实体用普通类（JPA 需无参构造+可变） |

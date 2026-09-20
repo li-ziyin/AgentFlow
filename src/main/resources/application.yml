@@ -4,6 +4,22 @@ server:
 spring:
   application:
     name: agentflow
+  # ===== 数据库（Phase 2 起启用；账号密码来自 docker-compose.yml 的初始化设置）=====
+  # 注意：datasource/jpa 必须缩进在 spring: 名下——上次写错位置，被解析成了 management 的子项
+  datasource:
+    url: jdbc:mysql://localhost:3306/agentflow?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: agentflow
+    password: agentflow123
+  jpa:
+    hibernate:
+      # 开发期：Hibernate 按实体类自动建表/加列。生产环境会换成显式迁移脚本（如 Flyway）
+      ddl-auto: update
+    # 学习期打开：控制台能看到框架生成的 SQL
+    show-sql: true
+#  data:
+#    redis:
+#      host: localhost
+#      port: 6379
 
 management:
   endpoints:
@@ -14,19 +30,9 @@ management:
     health:
       show-details: when-authorized
 
-# ===== 数据库配置（第 3 周接入 MySQL 时取消注释）=====
-#  datasource:
-#    url: jdbc:mysql://localhost:3306/agentflow?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
-#    username: agentflow
-#    password: agentflow123
-#  data:
-#    redis:
-#      host: localhost
-#      port: 6379
-
 # ===== LLM 接入（DeepSeek，OpenAI 兼容协议）=====
 # api-key 从环境变量 LLM_API_KEY 读取，不写进任何文件；
-# `:` 后为空默认值，保证没配环境变量时应用也能启动（Phase 1 会加启动校验）
+# `:` 后为空默认值，保证没配环境变量时应用也能启动（Phase 1 加了启动校验）
 llm:
   base-url: https://api.deepseek.com
   api-key: ${LLM_API_KEY:}
