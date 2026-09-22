@@ -37,7 +37,7 @@ flowchart TB
 
 ## 快速开始
 
-前置要求：**JDK 21**（已装于 `~/.jdks/jdk-21.0.12.1+1`）、VS Code + Java/Spring 扩展（项目 `.vscode/` 已配置好，扩展清单见 `.vscode/extensions.json`）、Docker Desktop（第 3 周前装好）、LLM API Key（第 1 周用，通过环境变量 `LLM_API_KEY` 注入，**不要提交到 git**）。
+前置要求：**JDK 21**（已装于 `~/.jdks/jdk-21.0.12.1+1`）、VS Code + Java/Spring 扩展（项目 `.vscode/` 已配置好，扩展清单见 `.vscode/extensions.json`）、Docker Desktop（第 3 周前装好）、API Key（DeepSeek 主对话 + 智谱 embedding）：填入项目根目录的 `application-local.yml`（已 gitignore，**严禁提交**），模板见该文件注释。
 
 ```bash
 # 启动（任选其一）

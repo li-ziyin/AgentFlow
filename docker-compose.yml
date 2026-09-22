@@ -5,13 +5,16 @@ services:
   mysql:
     image: mysql:8.0
     container_name: agentflow-mysql
+    restart: unless-stopped   # Docker 启动时自动拉起，机器重启/睡眠恢复后不用手动管
     environment:
       MYSQL_ROOT_PASSWORD: root123456
       MYSQL_DATABASE: agentflow
       MYSQL_USER: agentflow
       MYSQL_PASSWORD: agentflow123
     ports:
-      - "3306:3306"
+      # 宿主机 13306 -> 容器 3306：Windows(Hyper-V/WSL) 重启后会随机保留端口段，
+      # 3306 曾被圈进保留段导致绑定失败，用非常规端口绕开
+      - "13306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
@@ -19,6 +22,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: agentflow-redis
+    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
