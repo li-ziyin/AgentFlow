@@ -3,54 +3,246 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AgentFlow Chat</title>
+<title>AgentFlow 控制台</title>
 <style>
+  /* ===== 设计令牌：仪器面板 —— 深色仪表侧栏 + 冷灰纸面主区，钢蓝作唯一强调色 ===== */
+  :root {
+    --ink: #10151b;        /* 侧栏底 */
+    --ink-raise: #1b242f;  /* 侧栏悬停/选中 */
+    --line-dark: #26313d;  /* 侧栏分隔线 */
+    --paper: #eef1f4;      /* 主区底 */
+    --card: #ffffff;
+    --accent: #31708e;     /* 钢蓝：当前会话指示条 / 用户气泡 */
+    --accent-soft: #e2edf3;
+    --text: #1d2730;
+    --muted: #84919e;
+    --muted-dark: #7c8b99; /* 侧栏内的弱文字 */
+    --danger: #a03b3b;
+    --mono: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: system-ui, -apple-system, "Microsoft YaHei", sans-serif; background: #f4f6f8; height: 100vh; display: flex; flex-direction: column; }
-  header { background: #1f2937; color: #fff; padding: 10px 16px; display: flex; align-items: center; gap: 12px; }
-  header h1 { font-size: 16px; font-weight: 600; }
-  header .sid { font-size: 12px; color: #9ca3af; font-family: monospace; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
-  header button { margin-left: auto; background: #374151; color: #fff; border: none; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; }
-  header button:hover { background: #4b5563; }
-  main { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
-  .msg { max-width: 72%; padding: 10px 14px; border-radius: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; font-size: 14px; }
-  .user  { align-self: flex-end; background: #2563eb; color: #fff; border-bottom-right-radius: 4px; }
-  .bot   { align-self: flex-start; background: #fff; color: #1f2937; border: 1px solid #e5e7eb; border-bottom-left-radius: 4px; }
-  .bot.error { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
-  .hint  { align-self: center; color: #9ca3af; font-size: 12px; }
-  footer { padding: 12px 16px; background: #fff; border-top: 1px solid #e5e7eb; display: flex; gap: 10px; }
-  textarea { flex: 1; resize: none; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; font-size: 14px; font-family: inherit; height: 44px; outline-color: #2563eb; }
-  footer button { background: #2563eb; color: #fff; border: none; border-radius: 8px; padding: 0 22px; font-size: 14px; cursor: pointer; }
-  footer button:disabled { background: #93c5fd; cursor: not-allowed; }
+  html, body { height: 100%; }
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    color: var(--text);
+    background: var(--paper);
+    display: grid;
+    grid-template-columns: 268px 1fr;
+    grid-template-rows: minmax(0, 1fr);  /* 显式声明唯一一行撑满容器：隐式行按内容收缩，短对话时应用会缩成一小块 */
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ===== 侧栏：会话历史 ===== */
+  aside {
+    background: var(--ink);
+    color: #dbe3ea;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;   /* grid/flex 子项默认 min-height:auto 会拒绝收缩，导致内部滚动失效 */
+  }
+  .wordmark {
+    padding: 18px 18px 14px;
+    border-bottom: 1px solid var(--line-dark);
+  }
+  .wordmark strong {
+    font-family: var(--mono);
+    font-size: 17px;
+    letter-spacing: .5px;
+    color: #f0f5f9;
+  }
+  .wordmark span {
+    display: block;
+    margin-top: 3px;
+    font-size: 11px;
+    color: var(--muted-dark);
+  }
+  .new-chat {
+    margin: 14px 14px 10px;
+    padding: 9px 12px;
+    background: transparent;
+    color: #dbe3ea;
+    border: 1px solid var(--line-dark);
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    text-align: left;
+  }
+  .new-chat:hover, .new-chat:focus-visible { background: var(--ink-raise); border-color: #38475a; }
+  .session-list { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 8px 10px; }
+  .session-list .empty { padding: 14px 10px; font-size: 12px; color: var(--muted-dark); }
+  .session-item {
+    width: 100%;
+    display: block;
+    padding: 9px 10px 9px 13px;
+    margin: 2px 0;
+    background: transparent;
+    border: none;
+    border-left: 3px solid transparent;
+    border-radius: 4px;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    min-width: 0;
+  }
+  .session-item:hover { background: var(--ink-raise); }
+  .session-item.active {
+    background: var(--ink-raise);
+    border-left-color: var(--accent);
+  }
+  .session-item .preview {
+    display: block;
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .session-item.active .preview { color: #fff; }
+  .session-item .meta {
+    display: block;
+    margin-top: 3px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted-dark);
+  }
+  aside footer {
+    padding: 10px 16px;
+    border-top: 1px solid var(--line-dark);
+    font-size: 11px;
+    color: var(--muted-dark);
+  }
+
+  /* ===== 主区：状态行 / 消息流 / 输入区 ===== */
+  main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .statusbar {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    padding: 9px 18px;
+    background: #fff;
+    border-bottom: 1px solid #dde3e9;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .statusbar .where { color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #msgs { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 10px; }
+  /* 短对话时消息贴着输入框（锚定底部），长对话时 margin 自动归零、正常滚动 */
+  #msgs > :first-child { margin-top: auto; }
+  .msg {
+    max-width: min(72%, 640px);
+    padding: 10px 14px;
+    border-radius: 10px;
+    line-height: 1.65;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 14px;
+  }
+  .user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 3px; }
+  .bot  { align-self: flex-start; background: var(--card); border: 1px solid #dfe5ea; border-bottom-left-radius: 3px; }
+  .bot.error { background: #f9efef; border-color: #e4c8c8; color: var(--danger); }
+  .hint { align-self: center; color: var(--muted); font-size: 12px; text-align: center; }
+  .composer {
+    display: flex;
+    gap: 10px;
+    padding: 12px 18px;
+    background: #fff;
+    border-top: 1px solid #dde3e9;
+  }
+  textarea {
+    flex: 1;
+    resize: none;
+    border: 1px solid #cfd7de;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 14px;
+    font-family: inherit;
+    height: 46px;
+    outline: none;
+  }
+  textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  .composer button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 0 24px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .composer button:disabled { background: #a5bfcf; cursor: not-allowed; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ===== 窄屏：侧栏收成抽屉 ===== */
+  .side-toggle { display: none; }
+  @media (max-width: 720px) {
+    body { grid-template-columns: 1fr; }
+    aside { position: fixed; inset: 0 auto 0 0; width: 268px; z-index: 10; transform: translateX(-100%); transition: transform .18s ease; }
+    body.side-open aside { transform: none; }
+    .side-toggle {
+      display: inline-block;
+      background: transparent;
+      border: none;
+      color: #fff;
+      font-size: 17px;
+      cursor: pointer;
+      padding: 4px 8px;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) { aside { transition: none; } }
 </style>
 </head>
 <body>
-<header>
-  <h1>AgentFlow Chat</h1>
-  <span class="sid" id="sidLabel">会话：未开始</span>
-  <button id="newBtn">新会话</button>
-</header>
-<main id="msgs">
-  <div class="hint">发一条消息开始对话。刷新页面后带着同一会话 id，对话仍能继续。</div>
+
+<aside id="sidebar">
+  <div class="wordmark">
+    <strong>AgentFlow</strong>
+    <span>多 Agent 工作流平台 · 控制台</span>
+  </div>
+  <button class="new-chat" id="newBtn">＋ 新对话</button>
+  <nav class="session-list" id="sessionList" aria-label="会话历史"></nav>
+  <footer>Enter 发送 · Shift+Enter 换行</footer>
+</aside>
+
+<main>
+  <div class="statusbar">
+    <button class="side-toggle" id="sideToggle" aria-label="打开会话列表">☰</button>
+    <span class="where" id="whereLabel">未选择会话</span>
+    <span id="statLabel"></span>
+  </div>
+  <div id="msgs">
+    <div class="hint">从左侧选择一个会话继续，或点「＋ 新对话」开始。</div>
+  </div>
+  <div class="composer">
+    <textarea id="input" placeholder="输入消息…"></textarea>
+    <button id="sendBtn">发送</button>
+  </div>
 </main>
-<footer>
-  <textarea id="input" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
-  <button id="sendBtn">发送</button>
-</footer>
 
 <script>
-// ==== 会话状态 ====
-// sessionId 存在浏览器 localStorage：刷新页面不丢，对话可以续接。
-// 注意方向：是"客户端保存 id、请求时带上"，服务器本身不认识你——无状态服务的客户端配合。
-let sessionId = localStorage.getItem('agentflow_sid') || null;
+// ===== 状态 =====
+// 当前会话 id 持久在 localStorage：刷新后自动回到上次所在会话——"知道自己在哪"。
+let currentId = localStorage.getItem('agentflow_sid') || null;
+let loadedId = null;    // 当前气泡区里真正加载了消息的会话——防重复加载的依据，别用 currentId 判断
+let sessions = [];      // 侧栏数据
+let busy = false;
 
 const msgs = document.getElementById('msgs');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('sendBtn');
-const sidLabel = document.getElementById('sidLabel');
-let busy = false;
+const whereLabel = document.getElementById('whereLabel');
+const statLabel = document.getElementById('statLabel');
+const sessionList = document.getElementById('sessionList');
 
-function showSid() { sidLabel.textContent = '会话：' + (sessionId || '未开始'); }
+// ===== 小工具 =====
+function fmtTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const p = n => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
 function addMsg(cls, text) {
   const div = document.createElement('div');
   div.className = 'msg ' + cls;
@@ -59,46 +251,111 @@ function addMsg(cls, text) {
   msgs.scrollTop = msgs.scrollHeight;
   return div;
 }
-function bubble(title) { addMsg('hint', title); }
+function hint(text) { addMsg('hint', text); }
+function clearMsgs() { msgs.innerHTML = ''; }
+function updateWhere() {
+  const s = sessions.find(x => x.sessionId === currentId);
+  whereLabel.textContent = s ? (s.preview || '（空会话）') : (currentId ? '未命名的会话' : '未选择会话');
+  statLabel.textContent = currentId ? `${s ? s.messageCount : 0} 条 · ${currentId.slice(0, 8)}` : '';
+}
 
-// ==== 发送与流式解析 ====
+// ===== 会话列表 =====
+async function refreshSessions() {
+  try {
+    const r = await fetch('/api/sessions');
+    const body = await r.json();
+    sessions = body.data || [];
+    renderSessions();
+    updateWhere();
+  } catch (e) { hint('会话列表加载失败：' + e.message); }
+}
+function renderSessions() {
+  sessionList.innerHTML = '';
+  if (!sessions.length) {
+    const div = document.createElement('div');
+    div.className = 'empty';
+    div.textContent = '还没有会话，点上面的「＋ 新对话」。';
+    sessionList.appendChild(div);
+    return;
+  }
+  for (const s of sessions) {
+    const btn = document.createElement('button');
+    btn.className = 'session-item' + (s.sessionId === currentId ? ' active' : '');
+    btn.innerHTML = '<span class="preview"></span><span class="meta"></span>';
+    btn.querySelector('.preview').textContent = s.preview || '（空会话）';
+    btn.querySelector('.meta').textContent = `${s.messageCount} 条 · ${fmtTime(s.lastAt)}`;
+    btn.addEventListener('click', () => openSession(s.sessionId));
+    sessionList.appendChild(btn);
+  }
+}
+async function openSession(id) {
+  // 只拦截"气泡区里已经是这个会话"的重复加载；启动续接时 loadedId 为空，不会被拦
+  if (busy || id === loadedId) { closeDrawer(); return; }
+  currentId = id;
+  localStorage.setItem('agentflow_sid', id);
+  clearMsgs();
+  try {
+    const r = await fetch(`/api/sessions/${encodeURIComponent(id)}/messages`);
+    const body = await r.json();
+    for (const m of (body.data || [])) addMsg(m.role === 'user' ? 'user' : 'bot', m.content);
+    if (!(body.data || []).length) hint('这个会话还没有消息。');
+  } catch (e) { hint('历史加载失败：' + e.message); }
+  loadedId = id;
+  renderSessions();
+  updateWhere();
+  msgs.scrollTop = msgs.scrollHeight;
+  closeDrawer();
+}
+function newChat() {
+  currentId = null;
+  loadedId = null;
+  localStorage.removeItem('agentflow_sid');
+  clearMsgs();
+  hint('新对话已就绪。发出第一条消息后，会话会自动建立并出现在左侧。');
+  renderSessions();
+  updateWhere();
+  input.focus();
+}
+
+// ===== 发送与 SSE 解析 =====
 async function send() {
   const text = input.value.trim();
   if (!text || busy) return;
   busy = true; sendBtn.disabled = true;
   input.value = '';
+  if (currentId === null) clearMsgs();
   addMsg('user', text);
   const bot = addMsg('bot', '');
   let answer = '';
 
   try {
-    // 为什么不用 EventSource？——它只支持 GET，而我们的对话接口是 POST。
-    // 所以用 fetch + ReadableStream 手动读流，这是 ChatGPT 类产品网页端的标准做法。
+    // 不用 EventSource：它只支持 GET，而对话是 POST——fetch 手动读流是同类产品的标准做法
     const resp = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: sessionId, message: text })
+      body: JSON.stringify({ sessionId: currentId, message: text })
     });
     if (!resp.ok || !resp.body) throw new Error('HTTP ' + resp.status);
 
     const reader = resp.body.getReader();
-    const decoder = new TextDecoder();  // stream:true 让跨 chunk 的中文字节也能正确解码
+    const decoder = new TextDecoder();  // stream:true 保证跨包的中文不乱码
     let buf = '';
-
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       buf += decoder.decode(value, { stream: true });
-
-      // SSE 协议帧以空行分隔：一帧 = event:xxx + data:yyy
       let sep;
       while ((sep = buf.indexOf('\n\n')) >= 0) {
         const frame = buf.slice(0, sep).replace(/\r/g, '');
         buf = buf.slice(sep + 2);
-        const ev = handleFrame(frame, bot, s => { answer += s; });
-        if (ev === 'session') { localStorage.setItem('agentflow_sid', sessionId); showSid(); }
+        if (handleFrame(frame, bot, s => { answer += s; }) === 'session') {
+          localStorage.setItem('agentflow_sid', currentId);
+          updateWhere();
+          refreshSessions();   // 新会话诞生，侧栏立刻出现
+        }
       }
     }
+    refreshSessions();         // 结束后再刷一次：预览/条数/排序更新
   } catch (e) {
     bot.classList.add('error');
     bot.textContent += (answer ? '\n' : '') + '请求失败：' + e.message;
@@ -107,39 +364,48 @@ async function send() {
     input.focus();
   }
 }
-
-/** 解析一帧 SSE。返回事件名。delta 追加到气泡，error 标红，session 记录会话 id。 */
 function handleFrame(frame, bot, onDelta) {
   let name = 'message', dataLines = [];
   for (const line of frame.split('\n')) {
     if (line.startsWith('event:')) name = line.slice(6).trim();
     else if (line.startsWith('data:')) {
       let d = line.slice(5);
-      if (d.startsWith(' ')) d = d.slice(1);   // SSE 规范：冒号后的一个空格不属于内容
+      if (d.startsWith(' ')) d = d.slice(1);
       dataLines.push(d);
     }
   }
   const data = dataLines.join('\n');
-  if (name === 'session') { sessionId = data; return name; }
-  if (name === 'delta')   { bot.textContent += data; msgs.scrollTop = msgs.scrollHeight; onDelta(data); return name; }
-  if (name === 'error')   { bot.classList.add('error'); bot.textContent += '\n[错误] ' + data; return name; }
+  if (name === 'session') { currentId = data; loadedId = data; return name; }
+  if (name === 'delta') {
+    let piece = data;
+    try { piece = JSON.parse(data); } catch (_) { /* 兼容未编码的纯文本增量 */ }
+    bot.textContent += piece;
+    msgs.scrollTop = msgs.scrollHeight;
+    onDelta(piece);
+    return name;
+  }
+  if (name === 'error') {
+    bot.classList.add('error');
+    bot.textContent += '\n[错误] ' + data;
+    return name;
+  }
   return name;
 }
 
-// ==== 交互事件 ====
+// ===== 事件与启动 =====
 sendBtn.addEventListener('click', send);
 input.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
 });
-document.getElementById('newBtn').addEventListener('click', () => {
-  sessionId = null;
-  localStorage.removeItem('agentflow_sid');
-  showSid();
-  msgs.innerHTML = '';
-  bubble('已开启新会话。服务器那边旧对话还在，但已经和这个页面无关了。');
-});
+document.getElementById('newBtn').addEventListener('click', newChat);
+document.getElementById('sideToggle').addEventListener('click', () => document.body.classList.toggle('side-open'));
+function closeDrawer() { document.body.classList.remove('side-open'); }
 
-showSid();
+refreshSessions().then(() => {
+  // 上次聊到哪，回到哪（该会话在列表里才回放）
+  if (currentId && sessions.some(s => s.sessionId === currentId)) openSession(currentId);
+  else { currentId = null; updateWhere(); }
+});
 input.focus();
 </script>
 </body>

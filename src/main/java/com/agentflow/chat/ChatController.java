@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.Disposable;
+import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -31,11 +32,13 @@ public class ChatController {
     private final DeepSeekClient llm;
     private final LlmProperties props;
     private final ConversationStore store;
+    private final ObjectMapper json;
 
-    public ChatController(DeepSeekClient llm, LlmProperties props, ConversationStore store) {
+    public ChatController(DeepSeekClient llm, LlmProperties props, ConversationStore store, ObjectMapper json) {
         this.llm = llm;
         this.props = props;
         this.store = store;
+        this.json = json;
     }
 
     /**
@@ -79,8 +82,11 @@ public class ChatController {
                 delta -> {
                     answer.append(delta);
                     try {
-                        // data() 指定 TEXT_PLAIN：避免字符串被 JSON 序列化器包上一层引号
-                        emitter.send(SseEmitter.event().name("delta").data(delta, MediaType.TEXT_PLAIN));
+                        // 增量 JSON 编码后发送：SSE 规范会吃掉 "data:" 后的一个空格，
+                        // 而 DeepSeek 的增量自带前导空格（如 " How"），直接发会被客户端吞掉。
+                        // JSON 字符串的引号把内容原样包住，空格/换行都不会丢。
+                        emitter.send(SseEmitter.event().name("delta")
+                                .data(json.writeValueAsString(delta), MediaType.TEXT_PLAIN));
                     } catch (IOException e) {
                         throw new UncheckedIOException(e);
                     }
