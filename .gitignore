@@ -43,3 +43,6 @@ application-local.yml
 
 # RAG 数据目录：上传原件 + 向量库文件
 data/
+
+# 面试口述自测稿（保留本地，不入库）
+docs/interview-prep.md
