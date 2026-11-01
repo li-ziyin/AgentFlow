@@ -56,6 +56,9 @@ public class StructuralChunker implements Chunker {
         StringBuilder cur = new StringBuilder();
         int curStart = -1;
         String curHeading = "";
+        // 块里是否已有"真实"内容（非回借区）：回借区属于上一块的小节，
+        // 第一个真实块落进来后，块的 heading 要改成它的小节——否则整篇都会挂在文档大标题下
+        boolean hasReal = false;
         for (Block b : blocks) {
             if (b.length() > target) {
                 // 单段超长（常见于无空行的 PDF 抽取文本）：先收掉手上攒的，再把大段按句切开
@@ -63,6 +66,7 @@ public class StructuralChunker implements Chunker {
                 cur = new StringBuilder();
                 curStart = -1;
                 curHeading = "";
+                hasReal = false;
                 chunkOversized(b, target, overlap, chunks);
                 continue;
             }
@@ -79,14 +83,19 @@ public class StructuralChunker implements Chunker {
                     cur = new StringBuilder(carried);
                     curStart = curStartOfCarried(prevStart, prevText, carried);
                 }
+                hasReal = false;
             }
             if (cur.isEmpty()) {
                 curStart = b.offset();
                 curHeading = b.heading();
             } else {
                 cur.append('\n');
+                if (!hasReal) {
+                    curHeading = b.heading();
+                }
             }
             cur.append(b.text());
+            hasReal = true;
         }
         flush(chunks, cur, curStart, curHeading);
         for (int i = 0; i < chunks.size(); i++) {

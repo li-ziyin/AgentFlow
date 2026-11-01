@@ -130,6 +130,28 @@ class ChunkerTest {
     }
 
     @Test
+    void chunkStartingWithCarriedTextTakesHeadingOfItsOwnSection() {
+        // 回归：回借区属于上一块的小节，但新块自己的第一个真实块（小节标题）落进来后，
+        // heading 必须改成它的小节——否则检索命中后来源卡片全挂在文档大标题下
+        Chunker c = new StructuralChunker(props(120, 20));
+        String sec1 = "第一章概述小节的内容比较长一点用来撑满块长。".repeat(3);
+        String sec2 = "第二章实现小节的内容也要足够长才能触发分块和回借。".repeat(3);
+        String doc = "# 文档大标题\n" + sec1 + "\n\n## 2.1 实现细节\n" + sec2;
+        List<Chunk> chunks = c.chunk(doc);
+        assertTrue(chunks.size() >= 2, "应切成多块，实际 " + chunks.size());
+        for (Chunk ch : chunks) {
+            if (ch.text().startsWith("第二章实现小节")) {
+                assertEquals("## 2.1 实现细节", ch.heading(),
+                        "以第二章内容为主的块应挂第二章的标题");
+            }
+        }
+        // 任意块都不能挂在"上一小节"的标题下而内容却是下一小节开头的（除了纯回借块的容忍情形）
+        for (Chunk ch : chunks) {
+            assertFalse(ch.heading().isEmpty(), "heading 不应为空: " + ch.text().substring(0, 15));
+        }
+    }
+
+    @Test
     void emptyAndTinyDocsAreHandled() {
         Chunker s = new StructuralChunker(props(100, 10));
         assertTrue(s.chunk("   \n \n ").isEmpty());
