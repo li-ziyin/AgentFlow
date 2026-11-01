@@ -32,3 +32,32 @@ POST http://localhost:8080/api/chat
 Content-Type: application/json
 
 {"message":""}
+
+### 5. 上传文档并索引（multipart；strategy 可选 structural|fixed，缺省用 rag.chunking.strategy 配置）
+### .http 文件里不好嵌文件内容，用终端 curl 最稳：
+###   curl -F "file=@testdoc.md" http://localhost:8080/api/documents
+###   curl -F "file=@paper.pdf" -F "strategy=fixed" http://localhost:8080/api/documents
+POST http://localhost:8080/api/documents
+Content-Type: multipart/form-data; boundary=----agentflow
+
+------agentflow
+Content-Disposition: form-data; name="file"; filename="demo.txt"
+Content-Type: text/plain
+
+（这里放文件内容——仅适合小文本；PDF/DOCX 请用上面的 curl）
+------agentflow--
+
+### 6. 文档列表
+GET http://localhost:8080/api/documents
+
+### 7. 纯检索（不带 LLM，评测脚本算 Recall@5/MRR@5 用）
+POST http://localhost:8080/api/rag/search
+Content-Type: application/json
+
+{"query":"在这里输入问题","topK":5}
+
+### 8. 知识库模式对话（kbEnabled=true：检索命中块注入 prompt，回答带 [n] 引用与 sources）
+POST http://localhost:8080/api/chat
+Content-Type: application/json
+
+{"message":"在这里输入问题","kbEnabled":true}

@@ -68,8 +68,8 @@
 **任务**
 - [x] 2.1 `docker compose up -d` 起 MySQL/Redis；开启 application.yml 中数据源配置
 - [x] 2.2 Spring Data JPA 实体：conversation / message 落库，替换内存上下文（实现为单表 chat_message，按 session_id 分组；"存全部、取最近 20 条进上下文"）
-- [ ] 2.3 `rag/` 包：文档上传接口，分块（按段落 + overlap），调用 embedding API 向量化（注意：**DeepSeek 没有 embedding 接口**，届时用智谱 embedding-3 或本地 bge-m3，主对话模型仍走 DeepSeek）
-- [ ] 2.4 向量存储 MVP：MySQL 存 JSON 数组，检索时内存暴力余弦相似度（**故意先这样做**，P5 有升级故事）
+- [x] 2.3 `rag/` 包：文档上传接口，分块（按段落 + overlap），调用 embedding API 向量化（**DeepSeek 没有 embedding 接口**，实测用智谱 embedding-3，1024 维）
+- [x] 2.4 向量存储 MVP：JSON 文件 + 内存暴力余弦相似度（**故意先这样做**，B 块有升级故事；登记册在 MySQL，向量+块文本在 data/vector_db.json）
 - [ ] 2.5 混合检索：关键词过滤 + 向量 TopK，简单加权融合
 - [ ] 2.6 对话接口支持 `kbId`：命中片段带进 prompt，回答标注引用来源
 - [ ] 2.7 Redis：会话缓存 + 接口级限流（Fixed Window 即可，讲清缺点）
@@ -180,3 +180,4 @@
 | 2026-09-22 | 修复长对话无法滚动：滚动链路（body→main→#msgs）各容器补 `min-height:0`；顺带修了启动续接被 openSession 的 `id===currentId` 守卫拦截、历史不加载的 bug（改为 `loadedId` 已加载标记）。矮视口实测：8 条气泡可滚、自动停在最新、页面不溢出。另：短对话消息锚定底部（`#msgs > :first-child { margin-top:auto }`，比 justify-content:flex-end 安全）；再修 grid 隐式行按内容收缩导致短对话时整个应用缩在窗口顶部（body 显式 `grid-template-rows: minmax(0,1fr)`，2000×1015 视口复验满铺） | 坑17：grid/flex 子项默认 `min-height:auto` 会拒绝收缩，内容撑破外层后内部 `overflow-y:auto` 永不触发——**滚动链上每个容器都要 min-height:0**；坑18：守卫条件用"目标==当前"会误伤"启动时自动加载当前会话"，防重复加载应判断"已加载标记"；坑19：**grid 容器不定义 grid-template-rows 时隐式行按内容收缩**，"高度 100vh 的 grid"不会自动把行撑满——布局异常先查"行/列轨道有没有显式定义" |
 | 2026-09-20 | MySQL 宿主机端口迁移 3306→13306；容器加 `restart: unless-stopped`（Docker 启动自拉起） | 坑14：Windows(Hyper-V/WSL) 重启后会随机保留端口段（netsh interface ipv4 show excludedportrange protocol=tcp 查看），3306 被圈进 3252-3351 导致绑定失败——用非常规端口绕开；坑15：机器睡眠后 WSL 时钟漂移，容器 Exited 时间戳不可信，看状态别看时间 |
 | 2026-11-01 | 热身完成：上游 401/402/403/404/429/5xx 统一翻译成带指引的中文提示（DeepSeekClient.onErrorMap → BizException），阻塞路径与 SSE 错误事件实测均友好报错、不再落兜底 500 | 坑20：WebClient 对非 2xx 抛 WebClientResponseException，不拦就落进兜底处理器变笼统 500——在客户端层 onErrorMap 翻译，阻塞/SSE 两条路径同时受益；坑2 复现确认：Git Bash curl 直接发中文 body 是 GBK 编码，测试一律 `--data-binary @UTF-8文件`；坑21（外部）：智谱 key 失效（国内外两个端点 1000 身份验证失败，9 月底还实测通过）——key 会在无声无息中过期，上线前要加"启动时探活"类检查 |
+| 2026-11-01 | ✅ **P2.3 RAG 管线主体完成并验证**：POST /api/documents（Tika 一套 API 解析 PDF/DOCX/TXT，实测 PDF+MD 上传→分块→智谱 embedding-3 1024 维→JSON 向量库→MySQL 登记册）；结构感知分块（标题/段落边界 + 句边界回借重叠 + heading 元数据）与固定滑窗双实现留作 C 块对比基线；/api/rag/search 纯检索端点；/api/chat 增加 kbEnabled——检索块编 [n] 注入 prompt，回答带引用编号与 sources 字段，库里没有的内容如实说"没有"；embedding 内容 hash 缓存（Redis）实测重传 0 重嵌入；kill 进程重启后向量与登记册完整、检索分数逐位一致；删除文档三处联动清干净；单测 15 项全过 | 坑22：Tika 内容探测优先于扩展名（.pdf 扩展名的纯文本按 text/plain 解析成功）——防伪装靠内容检测而非后缀校验；坑23：Jackson 3 的解析异常是非受检 JacksonException（extends RuntimeException），catch IOException 直接编译报错；坑24（自我纠错）：shell 里手工提取 key 测智谱 API 报 1000 身份验证失败，但应用内同 key 调用成功——shell 变量二次加工污染了 key，**配好的 key 不要在 shell 里折腾，用应用层验证**；坑25：测试 PDF 别拿用户真实文档（内容会经 embedding API 出网），用 PDFBox 在测试里现场生成 |

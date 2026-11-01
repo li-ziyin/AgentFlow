@@ -59,6 +59,36 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-webmvc</artifactId>
 		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<!-- Redis 客户端（Lettuce）。当前用于 embedding 缓存；
+			     B 块换 redis-stack 镜像后，向量检索走 Jedis 直写 FT.SEARCH（Spring Data 不封装向量检索） -->
+			<artifactId>spring-boot-starter-data-redis</artifactId>
+		</dependency>
+
+		<!-- ===== 文档解析：Apache Tika，一套 API 吃掉 PDF/DOCX/TXT ===== -->
+		<dependency>
+			<groupId>org.apache.tika</groupId>
+			<artifactId>tika-core</artifactId>
+			<version>3.3.3</version>
+		</dependency>
+		<!-- 模块化引解析器：不拉 tika-parsers-standard 全家桶（几十 MB），
+		     按需取 PDF / 微软格式（DOCX）/ 纯文本三个模块 -->
+		<dependency>
+			<groupId>org.apache.tika</groupId>
+			<artifactId>tika-parser-pdf-module</artifactId>
+			<version>3.3.3</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.tika</groupId>
+			<artifactId>tika-parser-microsoft-module</artifactId>
+			<version>3.3.3</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.tika</groupId>
+			<artifactId>tika-parser-text-module</artifactId>
+			<version>3.3.3</version>
+		</dependency>
 
 		<dependency>
 			<groupId>org.projectlombok</groupId>

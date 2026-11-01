@@ -21,10 +21,11 @@ spring:
       ddl-auto: update
     # 学习期打开：控制台能看到框架生成的 SQL
     show-sql: true
-#  data:
-#    redis:
-#      host: localhost
-#      port: 6379
+  data:
+    # embedding 缓存与（B 块起的）向量库共用这个 Redis；Redis 挂了缓存自动降级为直调 API
+    redis:
+      host: localhost
+      port: 6379
 
 management:
   endpoints:
@@ -46,3 +47,22 @@ llm:
 # ===== 智谱开放平台（embedding 用：DeepSeek 不提供 embedding 接口，Phase 2.3 RAG 使用）=====
 zhipu:
   api-key: ${ZHIPU_API_KEY:}
+
+# ===== RAG 管线（Phase 2.3）=====
+rag:
+  chunking:
+    # structural = 结构感知（标题/段落边界 + 重叠），fixed = 固定滑窗（cx-ai 课设做法，留作对比实验基线）
+    strategy: structural
+    chunk-size: 400        # 目标块长（字符，全角当量按 1 计）
+    overlap-percent: 15    # 相邻块重叠占比（%）
+  embedding:
+    model: embedding-3
+    # 维度决定向量库索引参数（先定维度再建索引）；embedding-3 支持 256/512/1024/2048，
+    # 1024 是质量/内存甜点位（HNSW 内存 ≈ 向量数 × 维度 × 4B × 图结构系数）
+    dimensions: 1024
+    batch-size: 16         # 批量 embedding 的每批条数（智谱单请求有条数上限，留余量）
+  top-k: 4                 # 检索问答默认带进 prompt 的块数
+  # 向量存储实现：json = 文件 + 内存暴力余弦（MVP，对比基线）；redis = Redis Stack HNSW（B 块）
+  vector-store: json
+  # 上传原件与向量库文件的落盘根目录（已 gitignore）
+  data-dir: ./data
