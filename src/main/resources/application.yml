@@ -21,6 +21,11 @@ spring:
       ddl-auto: update
     # 学习期打开：控制台能看到框架生成的 SQL
     show-sql: true
+  # 文档上传 multipart 上限（默认 1MB 对真实 PDF 太小）；业务层另有 20MB 校验
+  servlet:
+    multipart:
+      max-file-size: 25MB
+      max-request-size: 26MB
   data:
     # embedding 缓存与（B 块起的）向量库共用这个 Redis；Redis 挂了缓存自动降级为直调 API
     redis:
@@ -62,7 +67,7 @@ rag:
     dimensions: 1024
     batch-size: 16         # 批量 embedding 的每批条数（智谱单请求有条数上限，留余量）
   top-k: 4                 # 检索问答默认带进 prompt 的块数
-  # 向量存储实现：json = 文件 + 内存暴力余弦（MVP，对比基线）；redis = Redis Stack HNSW（B 块）
-  vector-store: json
+  # 向量存储实现：redis = Redis Stack HNSW（默认，B 块）；json = 文件 + 内存暴力余弦（评测对比基线）
+  vector-store: redis
   # 上传原件与向量库文件的落盘根目录（已 gitignore）
   data-dir: ./data

@@ -1,6 +1,8 @@
 package com.agentflow.rag;
 
 import com.agentflow.common.BizException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
@@ -27,6 +29,8 @@ import java.util.UUID;
 @Component
 @ConditionalOnProperty(name = "rag.vector-store", havingValue = "json", matchIfMissing = true)
 public class JsonVectorStore implements VectorStore {
+
+    private static final Logger log = LoggerFactory.getLogger(JsonVectorStore.class);
 
     private final ObjectMapper json;
     private final Path file;
@@ -69,6 +73,7 @@ public class JsonVectorStore implements VectorStore {
 
     @Override
     public synchronized List<SearchHit> search(float[] queryVector, int topK) {
+        long t0 = System.nanoTime();
         loadIfNeeded();
         float[] q = normalize(queryVector);
         // 暴力余弦：向量入库时已归一化，score = 点积。千块级毫秒完成，纯线性扫描无索引
@@ -83,6 +88,8 @@ public class JsonVectorStore implements VectorStore {
             hits.add(new SearchHit(c.docId(), c.filename(), c.chunkIdx(), c.offset(),
                     c.heading(), c.text(), scored.get(i).score));
         }
+        long ms = (System.nanoTime() - t0) / 1_000_000;
+        log.info("vector search (json/brute): {} chunks, took {} ms", db.chunks().size(), ms);
         return hits;
     }
 

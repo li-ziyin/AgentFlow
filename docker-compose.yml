@@ -20,9 +20,13 @@ services:
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
 
   redis:
-    image: redis:7-alpine
+    # Redis Stack = 原生 Redis + RediSearch 模块（FT.CREATE/FT.SEARCH，含 HNSW 向量索引）。
+    # A 块的 embedding 缓存只用普通 KV；B 块起向量检索依赖 RediSearch——镜像从 redis:7 换过来
+    image: redis/redis-stack-server:latest
     container_name: agentflow-redis
     restart: unless-stopped
+    # AOF 持久化：容器重启向量数据不丢（默认只有 RDB 快照，最多丢 1 分钟写入）
+    command: redis-stack-server --appendonly yes
     ports:
       - "6379:6379"
     volumes:

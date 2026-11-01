@@ -7,6 +7,7 @@ import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
@@ -44,6 +45,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(NoResourceFoundException.class)
     public Result<Void> handleNotFound(NoResourceFoundException e) {
         return Result.error(404, "接口不存在");
+    }
+
+    /** 上传文件超过 multipart 限制：属于调用方的问题，返回 400 并告知上限。 */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public Result<Void> handleMaxUpload(MaxUploadSizeExceededException e) {
+        return Result.error(400, "上传文件超过大小限制（25MB）");
     }
 
     /** 业务异常：message 本来就是给人看的，原样返回。 */

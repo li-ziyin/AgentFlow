@@ -61,9 +61,20 @@
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
-			<!-- Redis 客户端（Lettuce）。当前用于 embedding 缓存；
-			     B 块换 redis-stack 镜像后，向量检索走 Jedis 直写 FT.SEARCH（Spring Data 不封装向量检索） -->
+			<!-- Redis 客户端（Lettuce）。embedding 缓存走 Spring Data Redis；
+			     向量检索 Spring Data 不封装，下面单独引 Jedis 直写 FT.CREATE/FT.SEARCH -->
 			<artifactId>spring-boot-starter-data-redis</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>redis.clients</groupId>
+			<!-- RediSearch 的向量检索（HNSW KNN）只能走原生命令，Jedis 是官方推荐的 Java 客户端 -->
+			<artifactId>jedis</artifactId>
+			<version>8.0.2</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.commons</groupId>
+			<!-- Jedis 连接池的底层 -->
+			<artifactId>commons-pool2</artifactId>
 		</dependency>
 
 		<!-- ===== 文档解析：Apache Tika，一套 API 吃掉 PDF/DOCX/TXT ===== -->
