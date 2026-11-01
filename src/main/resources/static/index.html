@@ -151,6 +151,62 @@
     background: #fff;
     border-top: 1px solid #dde3e9;
   }
+  /* 知识库开关：发出 kbEnabled=true，走检索→引用→sources 卡片链路 */
+  .kb-toggle {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .kb-toggle input { display: none; }
+  .kb-toggle .switch {
+    width: 30px;
+    height: 17px;
+    border-radius: 9px;
+    background: #cfd7de;
+    position: relative;
+    transition: background .15s ease;
+  }
+  .kb-toggle .switch::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: #fff;
+    transition: left .15s ease;
+  }
+  .kb-toggle input:checked + .switch { background: var(--accent); }
+  .kb-toggle input:checked + .switch::after { left: 15px; }
+  .kb-toggle input:focus-visible + .switch { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* 来源卡片：sources 事件帧渲染在回答气泡下方 */
+  .sources {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-width: min(85%, 700px);
+    align-self: flex-start;
+  }
+  .src-card {
+    background: var(--accent-soft);
+    border: 1px solid #cddfe8;
+    border-radius: 7px;
+    padding: 5px 9px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: #45607a;
+    max-width: 260px;
+    cursor: default;
+  }
+  .src-card .ref { font-weight: 700; color: var(--accent); }
+  .src-card .file { font-weight: 600; }
+  .src-card .head { color: var(--muted); display: block; }
   textarea {
     flex: 1;
     resize: none;
@@ -216,6 +272,11 @@
     <div class="hint">从左侧选择一个会话继续，或点「＋ 新对话」开始。</div>
   </div>
   <div class="composer">
+    <label class="kb-toggle" title="开启后先检索知识库再回答，回答带引用来源">
+      <input type="checkbox" id="kbToggle">
+      <span class="switch"></span>
+      知识库
+    </label>
     <textarea id="input" placeholder="输入消息…"></textarea>
     <button id="sendBtn">发送</button>
   </div>
@@ -228,13 +289,22 @@ let currentId = localStorage.getItem('agentflow_sid') || null;
 let loadedId = null;    // 当前气泡区里真正加载了消息的会话——防重复加载的依据，别用 currentId 判断
 let sessions = [];      // 侧栏数据
 let busy = false;
+// 知识库模式也持久化：刷新后保持上次的选择
+let kbOn = localStorage.getItem('agentflow_kb') === '1';
 
 const msgs = document.getElementById('msgs');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('sendBtn');
+const kbToggle = document.getElementById('kbToggle');
 const whereLabel = document.getElementById('whereLabel');
 const statLabel = document.getElementById('statLabel');
 const sessionList = document.getElementById('sessionList');
+kbToggle.checked = kbOn;
+kbToggle.addEventListener('change', () => {
+  kbOn = kbToggle.checked;
+  localStorage.setItem('agentflow_kb', kbOn ? '1' : '0');
+  input.focus();
+});
 
 // ===== 小工具 =====
 function fmtTime(iso) {
@@ -333,7 +403,7 @@ async function send() {
     const resp = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: currentId, message: text })
+      body: JSON.stringify({ sessionId: currentId, message: text, kbEnabled: kbOn })
     });
     if (!resp.ok || !resp.body) throw new Error('HTTP ' + resp.status);
 
@@ -389,7 +459,41 @@ function handleFrame(frame, bot, onDelta) {
     bot.textContent += '\n[错误] ' + data;
     return name;
   }
+  if (name === 'sources') {
+    // 协议 2.6/D：回答流结束后的来源帧。JSON 解析失败就静默忽略（降级为不显示卡片）
+    let obj = null;
+    try { obj = JSON.parse(data); } catch (_) { return name; }
+    renderSources(bot, obj.sources || []);
+    return name;
+  }
   return name;
+}
+
+/** 来源卡片：[n] 与回答里的引用编号对应；悬停看完整片段 */
+function renderSources(bot, sources) {
+  if (!sources.length) return;
+  const row = document.createElement('div');
+  row.className = 'sources';
+  for (const s of sources) {
+    const card = document.createElement('div');
+    card.className = 'src-card';
+    const head = document.createElement('span');
+    head.className = 'head';
+    head.textContent = s.heading ? s.heading : ('块 #' + s.chunkIdx);
+    const label = document.createElement('span');
+    label.className = 'ref';
+    label.textContent = '[' + s.ref + '] ';
+    const file = document.createElement('span');
+    file.className = 'file';
+    file.textContent = s.filename + ' · ' + (s.score * 100).toFixed(0) + '%';
+    card.title = s.snippet;
+    card.appendChild(head);
+    card.appendChild(label);
+    card.appendChild(file);
+    row.appendChild(card);
+  }
+  bot.after(row);
+  msgs.scrollTop = msgs.scrollHeight;
 }
 
 // ===== 事件与启动 =====

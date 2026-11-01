@@ -24,6 +24,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -130,6 +131,7 @@ public class ChatController {
                     store.append(sessionId,
                             new LlmMessage("user", req.message()),
                             new LlmMessage("assistant", answer.toString()));
+                    sendSources(emitter, hits);
                     emitter.complete();
                 }
         );
@@ -138,6 +140,38 @@ public class ChatController {
         emitter.onError(t -> subscription.dispose());
         emitter.onCompletion(subscription::dispose);
         return emitter;
+    }
+
+    /**
+     * 2.6/D 协议扩展：token 流结束后、收尾前追加一个 sources 事件帧——
+     * 知识库模式下把本轮命中的块（引用编号与 prompt 里的 [n] 对应）发给前端渲染来源卡片。
+     * 协议设计上把 sources 放在 delta 之后是刻意的：引用属于"这一轮回答"的元数据，
+     * 先让正文流完再补元数据，客户端的中断/容错逻辑不用为它改。
+     * 普通对话（kbEnabled=false）不发这帧——客户端按"没收到 sources"处理即可。
+     */
+    private void sendSources(SseEmitter emitter, List<SearchHit> hits) {
+        if (hits.isEmpty()) {
+            return;
+        }
+        try {
+            List<SourceRef> refs = new ArrayList<>();
+            for (int i = 0; i < hits.size(); i++) {
+                SearchHit h = hits.get(i);
+                String text = h.text();
+                String snippet = text.length() > 120 ? text.substring(0, 120) + "…" : text;
+                refs.add(new SourceRef(i + 1, h.docId(), h.filename(), h.chunkIdx(),
+                        h.heading(), h.offset(), h.score(), snippet));
+            }
+            emitter.send(SseEmitter.event().name("sources")
+                    .data(json.writeValueAsString(Map.of("sources", refs)), MediaType.TEXT_PLAIN));
+        } catch (IOException e) {
+            log.warn("Failed to send sources frame", e);
+        }
+    }
+
+    /** sources 帧的单条引用：snippet 只带前 120 字，全文留库里，控制台卡片够用就行 */
+    public record SourceRef(int ref, String docId, String filename, int chunkIdx,
+                            String heading, int offset, double score, String snippet) {
     }
 
     private void sendSessionId(SseEmitter emitter, String sessionId) {
