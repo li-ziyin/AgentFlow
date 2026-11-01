@@ -1,75 +1,140 @@
-# AgentFlow · 轻量级多 Agent 工作流平台
+# AgentFlow · AI 流式对话与 RAG 检索平台
 
-用 JSON DSL 定义工作流（LLM 节点、工具节点、知识库检索节点、条件分支），后端以**自研 DAG 引擎**流式执行，支持自研 Agent 循环（ReAct / Function Calling）、RAG（混合检索 + 引用溯源）与 MCP 工具接入。
+基于 Spring Boot 4 / JDK 21 的 AI 应用后端：SSE 流式对话、多轮会话上下文、生产级 RAG 检索链路（Redis Stack 向量检索 + 引用溯源），并以**自建评测集驱动检索调优**——所有指标可复现（`scripts/eval_rag.py`）。
 
-> **简历一句话（目标态，做完对应阶段再更新）**：基于 Spring Boot 4 / JDK 21 构建多 Agent 工作流平台：自研 DAG 执行引擎（节点并发调度、超时重试、checkpoint 恢复），自实现 ReAct Agent 循环与 Function Calling，RAG 管线（混合检索 + Rerank + 引用溯源），MCP 工具生态，SSE 流式架构；通过评测集与压测给出量化指标。
+不依赖 LangChain 等框架，核心链路手写。
 
-## 功能路线（分 6 个阶段，见 [docs/roadmap.md](docs/roadmap.md)）
+## 已实现
 
-| 阶段 | 周期 | 内容 | 状态 |
-|---|---|---|---|
-| P0 | 第 0 周 | 环境搭建 + 项目骨架 | 🚧 进行中 |
-| P1 | 第 1-2 周 | Spring 基础 + LLM 接入 + SSE 流式对话 | ⬜ |
-| P2 | 第 3-4 周 | MySQL/Redis + RAG 管线（检索、引用） | ⬜ |
-| P3 | 第 5-7 周 | 自研 DAG 工作流引擎（核心） | ⬜ |
-| P4 | 第 8-9 周 | Agent 循环 + MCP 工具生态 | ⬜ |
-| P5 | 第 10-11 周 | 可观测 + 评测集 + 压测 + 演示页 | ⬜ |
-| P6 | 第 12 周 | 部署、文档、复盘收尾 | ⬜ |
+### 对话闭环
+- DeepSeek LLM 接入；上游错误统一翻译（401/402/403/404/429/5xx → 带指引的中文提示，阻塞与 SSE 两条路径一致）
+- SSE 打字机式流式对话；多轮上下文（同会话稳定记忆、新会话相互隔离）
+- 会话消息经 Spring Data JPA 落库 MySQL，**跨进程重启完整回放**（真实重启验证）
+- 网页聊天控制台（原生 JS）：会话列表 / 切换 / 历史回放 / 知识库开关 / 引用来源卡片
 
-## 目标架构
+### RAG 检索链路
+- **文档上传**：Apache Tika 一套 API 解析 PDF/DOCX/TXT（按内容探测，不信任扩展名）
+- **结构感知分块**：标题/段落边界切块 + 句边界回借重叠 + heading 元数据；固定滑窗双实现保留作对照基线
+- **向量嵌入**：智谱 embedding-3（1024 维）；内容 hash 缓存——同文档重传**零重复嵌入**（实测 1540/1540 命中，4.4 秒完成、0 次 API 调用）
+- **向量存储**（接口解耦，`@ConditionalOnProperty` 一行配置切换）：
+  - Redis Stack（RediSearch）：Jedis 直写 `FT.CREATE`/`FT.SEARCH`，HNSW（M=16, EF_CONSTRUCTION=200）+ COSINE + FLOAT32，AOF 持久化，启动幂等建索引
+  - JSON 文件 + 暴力余弦（评测基线保留）
+- **引用溯源**：检索块编 `[n]` 注入 prompt，回答带引用编号；SSE 流末追加 `sources` 帧（ref/filename/chunkIdx/heading/score/snippet），控制台渲染来源卡片；知识库没有的内容如实回答"没有"
+
+### 评测驱动调优
+自建评测集：40 条锚定 QA + 3 条陷阱题（`docs/eval/evalset.json`），锚点句判定与分块策略解耦。复现：`python scripts/eval_rag.py search|faith|traps`，完整数据见 [docs/eval/RESULTS.md](docs/eval/RESULTS.md)。
+
+**分块策略对比**（干净索引）：
+
+| 分块策略 | Recall@5 | MRR@5 |
+|---|---|---|
+| 固定滑窗 · 15% 重叠 | 0.950 | 0.755 |
+| 固定滑窗 · 0% 重叠 | 0.950 | 0.731 |
+| 结构感知 · 15% 重叠 | 0.975 | 0.759 |
+| **结构感知 · 0% 重叠** | **1.000** | **0.818** |
+
+- 忠实度（LLM-as-judge）**4.80/5**（抽样 20 条）；陷阱题 **3/3 诚实拒绝**，零编造
+- 千块级压测：1545 块 43 秒完成向量化入库；HNSW 检索 **p50=2ms / p95=4ms / p99=12ms**（100 次真实查询）
+- **诚实结论**：这个量级暴力扫反而最快（无网络往返，p99=36ms 且主要是文件加载）；换 HNSW 买的是复杂度曲线（O(N×dim) → 近似 O(logN)）与数据生命周期解耦（AOF 重启恢复、多实例共享）
+- 三条评测发现：① 语料稀释是第一杀手——混入 1545 块模板化干扰语料后 Recall@5 从 0.975 跌至 0.275，评测语料构成必须对齐生产；② 结构感知的真实优势是"不依赖重叠"（同 15% 重叠时两策略打平，0% 时拉开 8.7 个 MRR 点）；③ 重叠是双刃剑——修补边界但稀释块焦点
+
+## 架构
 
 ```mermaid
 flowchart TB
-    U[演示页 / API 调用方] -->|REST + SSE| APP[AgentFlow 后端]
-    subgraph APP[AgentFlow 后端 Spring Boot 4]
+    U[聊天控制台 / API] -->|REST + SSE| APP[AgentFlow 后端 Spring Boot 4]
+    subgraph APP[已实现]
         GW[接口层 REST / SSE]
-        WF[DAG 工作流引擎]
-        AG[Agent 执行器 ReAct]
-        RAG[RAG 管线]
-        OBS[可观测 Trace / Token 统计]
+        CHAT[对话：多轮上下文 / LLM 接入 / 错误翻译]
+        RAG[RAG：分块 / 嵌入缓存 / 向量检索 / 引用溯源]
+        EVAL[评测：Recall / MRR / 忠实度]
     end
-    AG --> LLM[LLM API: DeepSeek / GLM]
-    AG --> MCP[MCP 工具: 搜索 / SQL 查询]
-    RAG --> VDB[(向量存储)]
-    WF --> DB[(MySQL)]
-    WF --> RD[(Redis)]
+    subgraph PLAN[规划中 P3/P4]
+        WF[DAG 工作流引擎]
+        AG[Agent 循环 ReAct / MCP 工具]
+    end
+    CHAT --> LLM[DeepSeek API]
+    RAG --> EMB[智谱 embedding-3]
+    RAG --> VDB[(Redis Stack HNSW / JSON)]
+    RAG --> DB[(MySQL 登记册 + 会话落库)]
+    WF -.-> GW
+    AG -.-> WF
 ```
+
+## 功能路线（详见 [docs/roadmap.md](docs/roadmap.md)，含逐阶段验收记录与 38 条踩坑）
+
+| 阶段 | 内容 | 状态 |
+|---|---|---|
+| P0 | 环境搭建 + 项目骨架 | ✅ |
+| P1 | LLM 接入 + SSE 流式对话 + 多轮上下文 | ✅ |
+| P2 | MySQL/Redis + RAG 管线（分块/向量检索/引用） | ✅ |
+| P3 | 自研 DAG 工作流引擎 | ⬜ 规划中 |
+| P4 | Agent 循环（ReAct / Function Calling）+ MCP | ⬜ 规划中 |
+| P5 | 可观测 + 评测 + 压测 | 🟨 评测部分已提前完成 |
+| P6 | 部署、文档、复盘 | ⬜ |
+
+## 技术栈
+
+Java 21 · Spring Boot 4.1 · Spring Data JPA · MySQL 8 · Redis Stack（RediSearch）· Jedis 8 · Apache Tika · DeepSeek API · 智谱 embedding-3 · SSE · Docker Compose · JUnit 5（单测 16 项）
 
 ## 快速开始
 
-前置要求：**JDK 21**（已装于 `~/.jdks/jdk-21.0.12.1+1`）、VS Code + Java/Spring 扩展（项目 `.vscode/` 已配置好，扩展清单见 `.vscode/extensions.json`）、Docker Desktop（第 3 周前装好）、API Key（DeepSeek 主对话 + 智谱 embedding）：填入项目根目录的 `application-local.yml`（已 gitignore，**严禁提交**），模板见该文件注释。
+前置要求：**JDK 21**、Docker Desktop、API Key（DeepSeek 主对话 + 智谱 embedding）。
 
-```bash
-# 启动（任选其一）
-./mvnw spring-boot:run          # 命令行（Windows 用 mvnw.cmd）
-# 或 IDEA 中直接运行 AgentFlowApplication
+1. 在项目根目录创建 `application-local.yml`（已 gitignore，**严禁提交**），填入两个 key：
 
-# 验证
-curl http://localhost:8080/api/ping          # {"code":0,"message":"ok",...}
-curl http://localhost:8080/actuator/health   # {"status":"UP",...}
-
-# 聊天页面（浏览器打开 http://localhost:8080/ 即可）
-# 静态页由 Spring Boot 托管：流式对话、多轮会话、新会话切换
+```yaml
+LLM_API_KEY: sk-xxxx        # DeepSeek
+ZHIPU_API_KEY: xxxxxxxx.xxxx  # 智谱
 ```
 
-接口级测试用项目根目录的 `requests.http`（需 VS Code 插件 REST Client）。
+2. 启动：
+
+```bash
+docker compose up -d         # MySQL 8（宿主机端口 13306）+ Redis Stack（AOF）
+./mvnw spring-boot:run       # Windows 用 mvnw.cmd
+```
+
+3. 浏览器打开 <http://localhost:8080/> 即聊天控制台（流式对话 / 多轮会话 / 知识库开关 / 来源卡片）；验证：
+
+```bash
+curl http://localhost:8080/api/ping          # {"code":0,"message":"ok",...}
+curl http://localhost:8080/actuator/health   # {"status":"UP",...}
+```
+
+接口级测试用项目根的 `requests.http`（VS Code REST Client 插件）；评测复现：
+
+```bash
+python scripts/eval_rag.py search   # Recall@5 / MRR@5
+python scripts/eval_rag.py faith    # 忠实度（LLM-as-judge）
+python scripts/eval_rag.py traps    # 陷阱题拒答
+```
 
 ## 目录结构
 
 ```
 agentflow
-├── docker-compose.yml        # MySQL + Redis（第 3 周启用）
-├── docs/roadmap.md           # 12 周路线图：任务、验收标准、面试题
+├── docker-compose.yml          # MySQL 8 + Redis Stack（AOF）
+├── requests.http               # 接口文档 / 测试用例
+├── docs/
+│   ├── roadmap.md              # 12 周路线图：任务、验收标准、进度日志、38 条踩坑
+│   ├── eval/
+│   │   ├── evalset.json        # 评测集（40 锚定 QA + 3 陷阱题）
+│   │   └── RESULTS.md          # 评测完整数据
+│   └── interview-prep.md       # （不入库）口述自测稿
+├── scripts/eval_rag.py         # 评测脚本（search / faith / traps）
 └── src/main/
     ├── java/com/agentflow/
-    │   ├── AgentFlowApplication.java
-    │   ├── common/           # 统一返回 Result、全局异常处理
-    │   ├── web/              # 临时健康检查接口（后续删除）
-    │   ├── chat/             # P1：对话 + LLM 客户端 + SSE
-    │   ├── rag/              # P2：分块 / 向量检索 / 引用
-    │   ├── workflow/         # P3：DAG 引擎（DSL 解析、调度、恢复）
-    │   └── tools/            # P4：Function Calling / MCP
-    └── resources/application.yml
+    │   ├── common/             # 统一返回 Result、全局异常、上游错误翻译、访问日志
+    │   ├── chat/               # 对话：LLM 客户端、SSE、多轮上下文、会话落库
+    │   ├── rag/                # RAG：解析、分块、嵌入缓存、向量存储（Redis/JSON）、引用
+    │   └── web/                # 演示页与接口
+    └── resources/
+        ├── application.yml
+        └── static/index.html   # 聊天控制台（原生 JS，手写 SSE 帧解析）
 ```
 
-> 包结构按阶段逐步建立，避免一次性过度设计；`chat/rag/workflow/tools` 空包到对应阶段才落代码。
+## 文档
+
+- [docs/roadmap.md](docs/roadmap.md) — 路线图与进度日志（每阶段"能跑 + 能讲"验收制，38 条踩坑记录）
+- [docs/eval/RESULTS.md](docs/eval/RESULTS.md) — 评测方法与完整数据
