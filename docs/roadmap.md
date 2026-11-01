@@ -71,7 +71,7 @@
 - [x] 2.3 `rag/` 包：文档上传接口，分块（按段落 + overlap），调用 embedding API 向量化（**DeepSeek 没有 embedding 接口**，实测用智谱 embedding-3，1024 维）
 - [x] 2.4 向量存储 MVP：JSON 文件 + 内存暴力余弦相似度（**故意先这样做**，B 块有升级故事；登记册在 MySQL，向量+块文本在 data/vector_db.json）
 - [ ] 2.5 混合检索：关键词过滤 + 向量 TopK，简单加权融合
-- [ ] 2.6 对话接口支持 `kbId`：命中片段带进 prompt，回答标注引用来源
+- [x] 2.6 对话接口支持 kbId：命中片段带进 prompt，回答标注引用来源（实现为 `kbEnabled` 字段：检索注入 + [n] 引用 + sources 帧）
 - [ ] 2.7 Redis：会话缓存 + 接口级限流（Fixed Window 即可，讲清缺点）
 
 **验收**：上传一份 PDF/Markdown，提问后回答附带"引用了第几段"；重启服务会话不丢。
@@ -135,8 +135,8 @@
 
 **任务**
 - [ ] 5.1 LLM 调用 trace：每次调用的 token 用量、耗时、成本落库，做个简单统计接口
-- [ ] 5.2 评测集 30~50 条问答 + 标注：算检索命中率（Hit@K）、Agent 任务成功率，跑出基线数字
-- [ ] 5.3 检索优化一轮：调 chunk 大小 / TopK / 加 Rerank（API 或本地 bge-reranker），对比评测分数**用数字说话**
+- [x] 5.2 评测集 30~50 条问答 + 标注：算检索命中率（Hit@K）、Agent 任务成功率，跑出基线数字（40 条锚定 QA + 3 条陷阱题，Recall@K/MRR@K + 忠实度；完整表见 docs/eval/RESULTS.md）
+- [x] 5.3 检索优化一轮：调 chunk 大小 / TopK / 加 Rerank（API 或本地 bge-reranker），对比评测分数**用数字说话**（完成分块策略×重叠消融与 topK 对比；Rerank 未做，标注为后续可选项）
 - [ ] 5.4 压测：JMeter 或 Gatling 压 SSE 长连接，记录 QPS / P99 / 错误率，写进 docs/benchmark.md
 - [x] 5.5 向量存储升级：**Redis Stack（RediSearch）替换暴力检索**（提前到 P2 的 B 块完成，选型理由见交接方案 B 块表：组件最少、compose 换镜像即得；Milvus 太重、PGVector 与已有 MySQL 双库别扭），对比延迟数据见进度日志 2026-11-01（二）
 - [ ] 5.6 演示前端：静态 HTML + JS 单页（对话 + 工作流调试视图），不用框架
@@ -183,3 +183,4 @@
 | 2026-11-01 | ✅ **P2.3 RAG 管线主体完成并验证**：POST /api/documents（Tika 一套 API 解析 PDF/DOCX/TXT，实测 PDF+MD 上传→分块→智谱 embedding-3 1024 维→JSON 向量库→MySQL 登记册）；结构感知分块（标题/段落边界 + 句边界回借重叠 + heading 元数据）与固定滑窗双实现留作 C 块对比基线；/api/rag/search 纯检索端点；/api/chat 增加 kbEnabled——检索块编 [n] 注入 prompt，回答带引用编号与 sources 字段，库里没有的内容如实说"没有"；embedding 内容 hash 缓存（Redis）实测重传 0 重嵌入；kill 进程重启后向量与登记册完整、检索分数逐位一致；删除文档三处联动清干净；单测 15 项全过 | 坑22：Tika 内容探测优先于扩展名（.pdf 扩展名的纯文本按 text/plain 解析成功）——防伪装靠内容检测而非后缀校验；坑23：Jackson 3 的解析异常是非受检 JacksonException（extends RuntimeException），catch IOException 直接编译报错；坑24（自我纠错）：shell 里手工提取 key 测智谱 API 报 1000 身份验证失败，但应用内同 key 调用成功——shell 变量二次加工污染了 key，**配好的 key 不要在 shell 里折腾，用应用层验证**；坑25：测试 PDF 别拿用户真实文档（内容会经 embedding API 出网），用 PDFBox 在测试里现场生成 |
 | 2026-11-01 | ✅ **B 块完成：向量库切换 Redis Stack**（commit 待填）。compose 换 redis/redis-stack-server 镜像 + AOF；新增 RedisVectorStore（@ConditionalOnProperty 切换，JSON 实现保留作评测基线）；Jedis 8 直写 FT.CREATE/FT.SEARCH，HNSW（M=16, EF_CONSTRUCTION=200）+ COSINE + FLOAT32，启动即建索引（幂等，环境问题启动时暴露）；**千块级验收：1545 块 43 秒完成向量化入库（83 批 × 16 条）**；实测两种实现的检索时延（100 次真实查询，同条件同查询集）：**Redis HNSW p50=2ms / p95=4ms / p99=12ms**，**JSON 暴力扫 p50=0ms / p95=0ms（预热后）/ 首查 36ms（文件加载）**——均在 50ms 验收线内；Redis 容器重启后 AOF 恢复数据完整、testOnBorrow 消化陈旧连接 | 坑26：Jedis 8 移除 JedisPooled，新入口 RedisClient.builder()（poolConfig 可配 testOnBorrow）；坑27：**RediSearch 返回的文档属性一律是 String（NUMERIC 字段也是）**，强转 Number = ClassCastException；坑28：RediSearch 的 PARAMS n 里 n = 键值 token 总数（对数×2），不是对数——手写协议探针才踩得到，Jedis 自动算对；坑29：TAG 查询值里的连字符是查询语法特殊字符要转义（UUID 全是 hex+连字符）；坑30：Spring Boot 默认 multipart 上限 1MB，530KB 中文文档 UTF-8 后 1.4MB 直接 MaxUploadSizeExceededException 落兜底 500——配 25MB + 单独的异常处理返回 400；坑31：Redis 容器重建后池内连接全死，首查可能撞上 WSL2 端口转发抖动——testOnBorrow 治本；外部事件：**智谱 embedding 余额耗尽（错误码 1113）**，1545 块的实测把资源包吃完——C 块评测（约需 100 条 query embedding + judge 调用）前需要充值或换资源包 |
 | 2026-11-01 | ✅ **D 块完成：SSE sources 溯源帧 + 控制台引用卡片**（f32f7bf）。协议扩展：delta 流结束后、complete 前追加 `event:sources`（JSON：ref/filename/chunkIdx/heading/offset/score/snippet 前 120 字），kbEnabled=false 不发这帧；前端：composer 加"知识库"开关（localStorage 持久化）+ 回答下方来源卡片（heading + [n] + filename + 得分%），[n] 与 prompt 里的引用编号一一对应；**浏览器截图自审通过**：4 卡片渲染正确、引用编号对得上、得体拒绝"贴文档当问题"。顺手修复分块 heading 传播 bug（88874d2）：回借区之后第一个真实块决定块的所属小节，否则整篇都挂在文档大标题下——卡片小节名因此从 H1 变成正确的 H2；重传 bigdoc 验证 embedding 缓存价值：1540/1540 全命中，4.4 秒完成、0 次 API 调用 | 坑32：修复后重传的块文本与修复前完全一致——分块参数不变时缓存键稳定，这也是把"内容 hash"做进缓存 key 的红利；坑33（测试方法）：IAB 里 label 文字点击会翻转已持久化的开关状态——**测试 UI 状态要先读再点**（状态驱动，不做盲点）；坑34：`tab.playwright.evaluate(fnString, arg)` 的 arg 传参在字符串函数形态下不生效，把参数 JSON.stringify 内嵌进表达式最稳 |
+| 2026-11-01 | ✅ **C 块完成：评测驱动调优**（评测集 40 条锚定 QA + 3 条陷阱题，脚本 scripts/eval_rag.py，完整数据 docs/eval/RESULTS.md）。**核心对比表（干净索引，18 块语料）**：structural-15% Recall@5=0.975/MRR@5=0.759；fixed-15% = 0.950/0.755；fixed-0% = 0.950/0.731；**structural-0% = 1.000/0.818（全场最优）**。**三大发现**：① 语料稀释是第一杀手——1545 块模板化干扰语料混入后 Recall@5 从 0.975 跌至 0.275，连锚点句原文都排不进 top-8，评测必须对齐生产语料构成；② 结构感知的真实优势是"不依赖重叠"——同 15% 重叠时两策略打平（重叠修平了边界损伤），0% 重叠时差距拉开（MRR 差 8.7 个点），固定滑窗的跨边界切割在无重叠时伤排序；③ 重叠是双刃剑——修补边界但稀释块焦点，结构化好的文档用 0% 更优，长段落语料保留 15% 默认。忠实度（LLM-as-judge，DeepSeek 裁判）**4.80/5**（抽样 20 条，19 条满分）；陷阱题**3/3 诚实拒绝**（"参考资料中没有相关内容"，零编造） | 坑35：评测问题必须与语料同构——bigdoc 的模板小节（"从 X 看性能权衡"）对泛化问题是近乎完美的干扰项，embedding 把"模板通用性"打高分；坑36：锚点句命中判定要做空白归一化（分块的 \n 拼接会让跨行锚点失配）；坑37（方法论）：预期的"结构感知碾压固定滑窗"没有出现，追机制才发现是重叠在兜底——**先想清楚机制再谈优化，评测的价值是暴露你以为的因果**；坑38：LLM 裁判用同生态模型有自我偏好，4.80/5 的绝对值偏高，只作横向对比 |
