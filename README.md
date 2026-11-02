@@ -4,6 +4,12 @@
 
 不依赖 LangChain 等框架，核心链路手写。
 
+## 控制台预览
+
+知识库问答实拍：SSE 流式回答带 `[n]` 引用标注，流末 `sources` 帧渲染来源卡片（小节标题 · 文件名 · 相似度得分）：
+
+![控制台 · 知识库引用回答](docs/screenshots/console-kb-citations.png)
+
 ## 已实现
 
 ### 对话闭环
